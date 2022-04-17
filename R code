@@ -1,0 +1,207 @@
+# First load all the required libraries
+library(lubridate)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(e1071)
+library(gridExtra)
+library(data.table)
+
+# data   item_cat
+# data 1 item
+# data 2 sales_tra
+# data 3 sub
+# data 4 shops
+# data 5 sales_test
+
+# DATA PRE-PROCESSING
+
+item_cat <- read_csv("item_categories.csv")
+items <- read_csv("items.csv")
+shops <- read_csv("shops.csv")
+sales_train <- read_csv("sales_train.csv")
+sales_test <- read_csv("test.csv")
+sub <- read_csv("sample_submission.csv")
+
+str(item_cat)
+str(items)
+str(shops)
+str(sales_train)
+str(sales_test)
+str(sub)
+
+apply(item_cat,2, function(x) length(unique(x)))
+apply(item,2, function(x) length(unique(x)))
+apply(shops,2, function(x) length(unique(x)))
+
+consolidated = sales_train %>%
+  left_join(items, by=c("item_id"))
+# item table appears at right of sales_tra table
+
+consolidated$item_name=NULL
+# item_name column disappears
+
+colSums(is.na(consolidated))
+# checks for missing values in consolidated
+
+colSums(consolidated=='')
+# is.na does not include blank entries
+
+consolidated$date=dmy(consolidated$date)
+consolidated$month=month(consolidated$date)
+consolidated$year=year(consolidated$date)
+consolidated$day=weekdays(consolidated$date)
+# we split date into day name,month,year
+
+consolidated$day=as.factor(consolidated$day)
+consolidated$month=as.factor(consolidated$month)
+consolidated$year=as.factor(consolidated$year)
+# converts a column from numeric to factor
+
+glimpse(consolidated)
+class(consolidated)
+
+summary(consolidated)
+
+data1<-consolidated
+summary(data1)
+#
+data<-data1
+data<-sample_n(data,5000)
+summary(data)
+
+data$final<-factor(data$shop_id)
+str(data)
+
+set.seed(12345)
+
+pd<-sample(2,nrow(data),replace=TRUE,prob = c(0.8,0.2))#(training,validate)
+
+train<-data[pd==1,]
+validate<-data[pd==2,]
+
+install.packages("party")
+library(party)
+tree<-ctree(final~month+year+day,data=train,controls=ctree_control(mincriterion=0.99,minsplit=500))
+tree
+plot(tree)
+#regression
+
+predict(tree,validate)
+library(rpart)
+tree1<-rpart(final~month+year+day,train)
+install.packages("rpart.plot")
+library("rpart.plot")
+rpart.plot(tree1,box.palette = "white",extra=1)
+
+#misclassification error for train data
+tab<-table(predict(tree),train$final)
+print(tab)
+1-sum(diag(tab))/sum(tab)
+
+#misclassification error for validate data
+testpred<-predict(tree,newdata=validate)
+tab<-table(testpred,validate$final)
+print
+1-sum(diag(tab))/sum(tab)
+
+# EXPLORATORY DATA ANALYSIS
+
+#--Total sales by store number
+options(scipen=200000)
+consolidated %>%
+  group_by(shop_id) %>%
+  summarise(total_sales = sum(item_cnt_day)) %>%
+  arrange(desc(total_sales))%>%
+  head(20)%>%
+  ggplot(aes(x = reorder(as.factor(shop_id), total_sales), y = total_sales,fill=as.factor(shop_id))) +
+  #geom_bar() makes the height of the bar proportional to the number of cases in 
+  #each group (or if the weight aesthetic is supplied, the sum of the weights).
+  geom_bar(stat = 'identity') + 
+  theme(legend.position = "bottom")+
+  labs(y = 'Total unit sales', x = 'Stores', title = 'Total Sales by Store') +
+  coord_flip()
+
+#--Most frequent items by store number
+consolidated %>%
+  group_by(shop_id) %>%
+  summarise(count = n_distinct(item_id)) %>%
+  arrange(desc(count)) %>%
+  head(20) %>%
+  ggplot(aes(x = reorder(as.factor(shop_id), count), y = count,fill=as.factor(shop_id))) +
+  geom_bar(stat = 'identity') +
+  theme(legend.position = "bottom") +
+  coord_flip() +
+  labs(x = "Stores", y = "Frequency of item",title="Most frequent items by store")
+
+#--Most frequent categories by store number
+consolidated %>%
+  group_by(shop_id) %>%
+  summarise(count = n_distinct(item_category_id)) %>%
+  arrange(desc(count)) %>%
+  head(20) %>%
+  ggplot(aes(x = reorder(as.factor(shop_id), count), y = count,fill=as.factor(shop_id))) +
+  geom_bar(stat = 'identity') +
+  theme(legend.position = "bottom") +
+  coord_flip() +
+  labs(x = "Stores ", y = "Frequency of Category",title="Most frequent categories by store")
+
+#--Total sales by category
+consolidated %>%
+  group_by(item_category_id) %>%
+  summarise(total_sales = sum(item_cnt_day)) %>%
+  arrange(desc(total_sales))%>%
+  head(20)%>%
+  ggplot(aes(x = reorder(as.factor(item_category_id), total_sales), y = total_sales,fill=as.factor(item_category_id))) +
+  geom_bar(stat = 'identity') + 
+  theme(legend.position = "bottom")+
+  labs(y = 'Total unit sales', x = 'Categories', title = 'Total Sales by Category') +
+  coord_flip()
+
+#--Most frequent items by category
+consolidated %>%
+  group_by(item_category_id) %>%
+  summarise(count = n_distinct(item_id)) %>%
+  arrange(desc(count)) %>%
+  head(20) %>%
+  ggplot(aes(x = reorder(as.factor(item_category_id), count),y = count,fill=as.factor(item_category_id)))+
+  geom_bar(stat = 'identity') +
+  theme(legend.position = "bottom") +
+  coord_flip() +
+  labs(x = "Categories ", y = "Number of unique Items",title = "Most frequent items by category")
+
+#--Total sales by item
+consolidated %>%
+  group_by(item_id) %>%
+  summarise(total_sales = sum(item_cnt_day)) %>%
+  arrange(desc(total_sales))%>%
+  head(20)%>%
+  ggplot(aes(x = reorder(as.factor(item_id), total_sales), y = total_sales,fill=as.factor(item_id))) +
+  geom_bar(stat = 'identity') + 
+  theme(legend.position = "bottom")+
+  labs(y = 'Total unit sales', x = 'Item', title = 'Total Sales by Item') +
+  coord_flip()
+
+#--Total sales by month
+consolidated %>%
+  group_by(month) %>%
+  summarise(total_sales = sum(item_cnt_day)) %>%
+  ggplot(aes(x = as.factor(month), y = total_sales, fill =as.factor(month))) +
+  geom_bar(stat = 'identity') + 
+  theme(legend.position = "none")+
+  labs(y = 'Total unit sales', x = 'Month', title = 'Total Sales by Month') 
+
+#--Total sales by days
+consolidated %>%
+  group_by(day) %>%
+  summarise(total_sales = sum(item_cnt_day)) %>%
+  ggplot(aes(x = as.factor(day), y = total_sales, fill =day)) +
+  geom_bar(stat = 'identity') + 
+  theme(legend.position = "none")+
+  labs(y = 'Total unit sales', x = 'Day', title = 'Total Sales by Days')
+
+#--Behaviour of item over a period of time
+consolidated %>%
+  ggplot(aes(date)) +
+  geom_freqpoly(color = "blue", binwidth = 10, size = 1.2)
+
